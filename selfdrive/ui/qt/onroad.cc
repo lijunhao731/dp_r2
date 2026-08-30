@@ -369,6 +369,14 @@ void PersonalityButton::updateState(const UIState &s) {
   bool available = cp.getOpenpilotLongitudinalControl() && s.scene.dp_long_personality_btn;
   setVisible(available);
   if (available) {
+    if (param_read_counter % 25 == 0) {
+      int new_val = std::atoi(params.get("LongitudinalPersonality").c_str());
+      if (new_val != val) {
+        val = new_val;
+        updateText();
+      }
+    }
+    param_read_counter++;
     update();
   }
 }
@@ -445,6 +453,33 @@ void AccelButton::paintEvent(QPaintEvent *event) {
   drawOnScreenButton(p, QPoint(btn_size / 2, btn_size / 2), QColor(0, 0, 0, 166), isDown() ? 0.6 : 1.0, main, "ACCEL", top);
 }
 
+// RpmButton
+RpmButton::RpmButton(QWidget *parent) : QPushButton(parent) {
+  setFixedSize(btn_size, btn_size);
+  rpm_text = "--";
+  setVisible(false);
+}
+
+void RpmButton::updateState(const UIState &s) {
+  if (!s.scene.started) {
+    setVisible(false);
+    return;
+  }
+  auto carState = (*s.sm)["carState"].getCarState();
+  int new_rpm = (int)carState.getEngineRpm();
+  if (new_rpm != rpm) {
+    rpm = new_rpm;
+    rpm_text = rpm > 0 ? QString::number((rpm + 5) / 10) : "--";
+  }
+  setVisible(true);
+  update();
+}
+
+void RpmButton::paintEvent(QPaintEvent *event) {
+  QPainter p(this);
+  drawOnScreenButton(p, QPoint(btn_size / 2, btn_size / 2), QColor(0, 0, 0, 166), 1.0, "x10RPM", "engine", rpm_text);
+}
+
 // Window that shows camera view and variety of info drawn on top
 AnnotatedCameraWidget::AnnotatedCameraWidget(VisionStreamType type, QWidget* parent) : fps_filter(UI_FREQ, 3, 1. / UI_FREQ), CameraWidget("camerad", type, true, parent) {
   pm = std::make_unique<PubMaster, const std::initializer_list<const char *>>({"uiDebug"});
@@ -462,6 +497,10 @@ AnnotatedCameraWidget::AnnotatedCameraWidget(VisionStreamType type, QWidget* par
 
   // Create a horizontal layout for map_settings_btn, accel_btn, and personality_btn
   QHBoxLayout* horizontalLayout = new QHBoxLayout();
+
+  // rpm display on the left
+  rpm_btn = new RpmButton(this);
+  horizontalLayout->addWidget(rpm_btn);
 
   // Add the spacer item to push the buttons to the right
   QSpacerItem* hSpacer = new QSpacerItem(1, 1, QSizePolicy::Expanding);
@@ -548,6 +587,7 @@ void AnnotatedCameraWidget::updateState(const UIState &s) {
   experimental_btn->updateState(s);
   accel_btn->updateState(s);
   personality_btn->updateState(s);
+  rpm_btn->updateState(s);
 
   #ifndef QCOM
   // update DM icon

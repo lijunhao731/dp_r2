@@ -410,11 +410,14 @@ bool Device::motionTriggered(const UIState &s) {
 #endif
 
 void Device::updateWakefulness(const UIState &s) {
+  Params params;
+
   bool ignition_just_turned_off = !s.scene.ignition && ignition_on;
   ignition_on = s.scene.ignition;
 
   #ifdef QCOM
-  if (ignition_just_turned_off || motionTriggered(s)) {
+  bool motion = motionTriggered(s);
+  if (ignition_just_turned_off || motion) {
   #else
   if (ignition_just_turned_off) {
   #endif
@@ -423,8 +426,40 @@ void Device::updateWakefulness(const UIState &s) {
     emit interactiveTimeout();
   }
 
+  // dp - LKA button toggle request (written by carstate on the Honda LKAS button
+  //       falling edge). Toggle the screen state: on -> force off; off -> clear the
+  //       force-off flag and reset the interactive timeout so it wakes regardless of
+  //       dp_device_display_off_mode.
+  if (params.getBool("dp_screen_toggle")) {
+    params.putBool("dp_screen_toggle", false);
+    if (awake) {
+      params.putBool("dp_screen_off", true);
+    } else {
+      params.putBool("dp_screen_off", false);
+      resetInteractiveTimeout();
+    }
+  }
+
+  // dp - forced screen off (set by the LKA toggle above). Cleared by a tap (MainWindow
+  // eventFilter, when the device is asleep), motion (pickup), or a critical alert, so
+  // the system's default wake paths keep working. Only force off if none of those fired.
+  bool dp_force_off = params.getBool("dp_screen_off");
+  if (dp_force_off) {
+    Alert alert = Alert::get(*(s.sm), s.scene.started_frame);
+    bool wake = (alert.status == cereal::ControlsState::AlertStatus::USER_PROMPT ||
+                 alert.status == cereal::ControlsState::AlertStatus::CRITICAL);
+    #ifdef QCOM
+    wake = wake || motion;
+    #endif
+    if (wake) {
+      params.putBool("dp_screen_off", false);
+      dp_force_off = false;
+    }
+  }
+
   // rick - display mode
   // tr("Disabled"), tr("On-Road") tr("MAIN"), tr("OP"), tr("Off")}
+  bool awake_target;
   if (s.scene.ignition && s.dp_device_display_off_mode > 0) {
     // Off - the display will be off completely (incl. warning).
 
@@ -450,10 +485,16 @@ void Device::updateWakefulness(const UIState &s) {
         resetInteractiveTimeout();
       }
     }
-    setAwake(interactive_timeout > 0);
+    awake_target = (interactive_timeout > 0);
   } else {
-    setAwake(s.scene.ignition || interactive_timeout > 0);
+    awake_target = (s.scene.ignition || interactive_timeout > 0);
   }
+
+  // dp - forced screen off overrides everything
+  if (dp_force_off) {
+    awake_target = false;
+  }
+  setAwake(awake_target);
 //  setAwake(s.scene.ignition || interactive_timeout > 0);
 }
 

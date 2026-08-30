@@ -1,10 +1,10 @@
 [submodule "panda"]
   path = panda
-  url = ../../dragonpilot-community/panda.git
+  url = ../../lijunhao731/panda.git
   branch = legacy
 [submodule "opendbc"]
   path = opendbc
-  url = ../../dragonpilot-community/opendbc.git
+  url = ../../lijunhao731/opendbc.git
   branch = legacy
 [submodule "laika_repo"]
   path = laika_repo

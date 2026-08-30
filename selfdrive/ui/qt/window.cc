@@ -92,6 +92,10 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
     case QEvent::MouseMove: {
       // ignore events when device is awakened by resetInteractiveTimeout
       ignore = !device()->isAwake();
+      if (ignore) {
+        // dp - a tap while the screen is forced off wakes it (clear the forced-off flag)
+        Params().putBool("dp_screen_off", false);
+      }
       device()->resetInteractiveTimeout();
       #ifdef QCOM
       // filter out touches while in android activity

@@ -3,6 +3,7 @@ from collections import defaultdict
 from cereal import car
 from openpilot.common.conversions import Conversions as CV
 from openpilot.common.numpy_fast import interp
+from openpilot.common.params import Params
 from opendbc.can.can_define import CANDefine
 from opendbc.can.parser import CANParser
 from openpilot.selfdrive.car.honda.hondacan import get_cruise_speed_conversion, get_pt_bus
@@ -28,7 +29,7 @@ def get_can_messages(CP, gearbox_msg):
     ("STEER_MOTOR_TORQUE", 0),  # TODO: not on every car
   ]
 
-  if CP.carFingerprint == CAR.ODYSSEY_CHN:
+  if CP.carFingerprint in (CAR.ODYSSEY_CHN, CAR.ODYSSEY_HYBRID):
     messages += [
       ("SCM_FEEDBACK", 25),
       ("SCM_BUTTONS", 50),
@@ -47,7 +48,7 @@ def get_can_messages(CP, gearbox_msg):
   if CP.carFingerprint in HONDA_BOSCH_ALT_BRAKE_SIGNAL:
     messages.append(("BRAKE_MODULE", 50))
 
-  if CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN}):
+  if CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN, CAR.ODYSSEY_HYBRID}):
     messages.append(("EPB_STATUS", 50))
 
   if CP.carFingerprint in HONDA_BOSCH:
@@ -58,7 +59,7 @@ def get_can_messages(CP, gearbox_msg):
         ("ACC_CONTROL", 50),
       ]
   else:  # Nidec signals
-    if CP.carFingerprint == CAR.ODYSSEY_CHN:
+    if CP.carFingerprint in (CAR.ODYSSEY_CHN, CAR.ODYSSEY_HYBRID):
       messages.append(("CRUISE_PARAMS", 10))
     else:
       messages.append(("CRUISE_PARAMS", 50))
@@ -79,7 +80,10 @@ def get_can_messages(CP, gearbox_msg):
   if CP.carFingerprint in HONDA_BOSCH_RADARLESS:
     messages.append(("CRUISE_FAULT_STATUS", 50))
   elif CP.openpilotLongitudinalControl:
-    messages.append(("STANDSTILL", 50))
+    if CP.carFingerprint == CAR.ODYSSEY_HYBRID:
+      messages.append(("BRAKE_ERROR", 100))
+    else:
+      messages.append(("STANDSTILL", 50))
 
   return messages
 
@@ -104,9 +108,23 @@ class CarState(CarStateBase):
     self.cruise_setting = 0
     self.v_cruise_pcm_prev = 0
 
+    # Honda distance button support: cycle LongitudinalPersonality (same as onroad PersonalityButton)
+    self.personality = 1  # default standard
+    try:
+      self.personality = int(Params().get('LongitudinalPersonality'))
+    except (ValueError, TypeError):
+      pass
+    # 0=aggressive(close)->distance 1, 1=standard->distance 2, 2=relaxed(far)->distance 3
+    self.read_distance_lines = self.personality + 1
+
+    # Honda LKAS button: short press toggles screen on/off (UI handles the toggle)
+    self.lkas_prev_pressed = False
+
     # When available we use cp.vl["CAR_SPEED"]["ROUGH_CAR_SPEED_2"] to populate vEgoCluster
     # However, on cars without a digital speedometer this is not always present (HRV, FIT, CRV 2016, ILX and RDX)
     self.dash_speed_seen = False
+
+    self.engineRpm = 0
 
   def update(self, cp, cp_cam, cp_body):
     ret = car.CarState.new_message()
@@ -120,6 +138,24 @@ class CarState(CarStateBase):
     self.prev_cruise_setting = self.cruise_setting
     self.cruise_setting = cp.vl["SCM_BUTTONS"]["CRUISE_SETTING"]
     self.cruise_buttons = cp.vl["SCM_BUTTONS"]["CRUISE_BUTTONS"]
+
+    # Honda distance button: CRUISE_SETTING value 3 = "distance_adj", detect on press (rising edge)
+    if self.cruise_setting == 3 and self.prev_cruise_setting != 3:
+      # Re-read current personality (may have been changed by onroad PersonalityButton)
+      try:
+        self.personality = int(Params().get('LongitudinalPersonality'))
+      except (ValueError, TypeError):
+        pass
+      # Cycle personality 0->1->2->0 (same as onroad PersonalityButton)
+      self.personality = (self.personality + 1) % 3
+      Params().put('LongitudinalPersonality', str(self.personality))
+      self.read_distance_lines = self.personality + 1
+
+    # Honda LKAS button: CRUISE_SETTING value 1 = "lkas_button", short press toggles screen
+    lkas_pressed = (self.cruise_setting == 1)
+    if self.lkas_prev_pressed and not lkas_pressed:
+      Params().put_bool('dp_screen_toggle', True)
+    self.lkas_prev_pressed = lkas_pressed
 
     # used for car hud message
     self.is_metric = not cp.vl["CAR_SPEED"]["IMPERIAL_UNIT"]
@@ -151,7 +187,10 @@ class CarState(CarStateBase):
       # On some cars, these two signals are always 1, this flag is masking a bug in release
       # FIXME: find and set the ACC faulted signals on more platforms
       if self.CP.openpilotLongitudinalControl:
-        ret.accFaulted = bool(cp.vl["STANDSTILL"]["BRAKE_ERROR_1"] or cp.vl["STANDSTILL"]["BRAKE_ERROR_2"])
+        if self.CP.carFingerprint == CAR.ODYSSEY_HYBRID:
+          ret.accFaulted = bool(cp.vl["BRAKE_ERROR"]["BRAKE_ERROR_1"] or cp.vl["BRAKE_ERROR"]["BRAKE_ERROR_2"])
+        else:
+          ret.accFaulted = bool(cp.vl["STANDSTILL"]["BRAKE_ERROR_1"] or cp.vl["STANDSTILL"]["BRAKE_ERROR_2"])
 
       # Log non-critical stock ACC/LKAS faults if Nidec (camera)
       if self.CP.carFingerprint not in HONDA_BOSCH:
@@ -185,7 +224,7 @@ class CarState(CarStateBase):
     ret.brakeHoldActive = cp.vl["VSA_STATUS"]["BRAKE_HOLD_ACTIVE"] == 1
 
     # TODO: set for all cars
-    if self.CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN}):
+    if self.CP.carFingerprint in (HONDA_BOSCH | {CAR.CIVIC, CAR.ODYSSEY, CAR.ODYSSEY_CHN, CAR.ODYSSEY_HYBRID}):
       ret.parkingBrake = cp.vl["EPB_STATUS"]["EPB_STATE"] != 0
 
     gear = int(cp.vl[self.gearbox_msg]["GEAR_SHIFTER"])
@@ -198,6 +237,8 @@ class CarState(CarStateBase):
     else:
       ret.gas = cp.vl["POWERTRAIN_DATA"]["PEDAL_GAS"]
       ret.gasPressed = ret.gas > 1e-5
+
+    self.engineRpm = cp.vl["POWERTRAIN_DATA"]["ENGINE_RPM"]
 
     ret.steeringTorque = cp.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"]
     ret.steeringTorqueEps = cp.vl["STEER_MOTOR_TORQUE"]["MOTOR_TORQUE"]

@@ -70,6 +70,7 @@ private:
   QString main;
   QString top;
   int val;
+  int param_read_counter = 0;
 };
 
 class AccelButton : public QPushButton {
@@ -90,6 +91,19 @@ private:
   QString main;
   QString top;
   int val;
+};
+
+class RpmButton : public QPushButton {
+  Q_OBJECT
+
+public:
+  explicit RpmButton(QWidget *parent = 0);
+  void updateState(const UIState &s);
+
+private:
+  void paintEvent(QPaintEvent *event) override;
+  QString rpm_text;
+  int rpm = 0;
 };
 
 class MapSettingsButton : public QPushButton {
@@ -163,6 +177,7 @@ private:
   bool speed_limit_valid = false;
   AccelButton *accel_btn;
   PersonalityButton *personality_btn;
+  RpmButton *rpm_btn;
 
   bool dp_no_gps_ctrl = false;
 
