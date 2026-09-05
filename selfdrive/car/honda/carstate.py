@@ -81,7 +81,7 @@ def get_can_messages(CP, gearbox_msg):
     messages.append(("CRUISE_FAULT_STATUS", 50))
   elif CP.openpilotLongitudinalControl:
     if CP.carFingerprint == CAR.ODYSSEY_HYBRID:
-      messages.append(("BRAKE_ERROR", 100))
+      messages.append(("HYBRID_BRAKE_ERROR", 100))
     else:
       messages.append(("STANDSTILL", 50))
 
@@ -95,6 +95,8 @@ class CarState(CarStateBase):
     self.gearbox_msg = "GEARBOX"
     if CP.carFingerprint == CAR.ACCORD and CP.transmissionType == TransmissionType.cvt:
       self.gearbox_msg = "GEARBOX_15T"
+    if CP.carFingerprint == CAR.ODYSSEY_HYBRID:
+      self.gearbox_msg = "GEARBOX_AUTO"
 
     self.main_on_sig_msg = "SCM_FEEDBACK"
     if CP.carFingerprint in HONDA_NIDEC_ALT_SCM_MESSAGES:
@@ -188,7 +190,7 @@ class CarState(CarStateBase):
       # FIXME: find and set the ACC faulted signals on more platforms
       if self.CP.openpilotLongitudinalControl:
         if self.CP.carFingerprint == CAR.ODYSSEY_HYBRID:
-          ret.accFaulted = bool(cp.vl["BRAKE_ERROR"]["BRAKE_ERROR_1"] or cp.vl["BRAKE_ERROR"]["BRAKE_ERROR_2"])
+          ret.accFaulted = bool(cp.vl["HYBRID_BRAKE_ERROR"]["BRAKE_ERROR_1"] or cp.vl["HYBRID_BRAKE_ERROR"]["BRAKE_ERROR_2"])
         else:
           ret.accFaulted = bool(cp.vl["STANDSTILL"]["BRAKE_ERROR_1"] or cp.vl["STANDSTILL"]["BRAKE_ERROR_2"])
 
@@ -287,7 +289,9 @@ class CarState(CarStateBase):
       if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
         ret.stockAeb = (not self.CP.openpilotLongitudinalControl) and bool(cp.vl["ACC_CONTROL"]["AEB_STATUS"] and cp.vl["ACC_CONTROL"]["ACCEL_COMMAND"] < -1e-5)
     else:
-      ret.stockAeb = bool(cp_cam.vl["BRAKE_COMMAND"]["AEB_REQ_1"] and cp_cam.vl["BRAKE_COMMAND"]["COMPUTER_BRAKE"] > 1e-5)
+      # hybrid Odyssey's stock camera puts its brake request at the HYBRID position
+      computer_brake_sig = "COMPUTER_BRAKE_HYBRID" if self.CP.carFingerprint == CAR.ODYSSEY_HYBRID else "COMPUTER_BRAKE"
+      ret.stockAeb = bool(cp_cam.vl["BRAKE_COMMAND"]["AEB_REQ_1"] and cp_cam.vl["BRAKE_COMMAND"][computer_brake_sig] > 1e-5)
 
     self.acc_hud = False
     self.lkas_hud = False

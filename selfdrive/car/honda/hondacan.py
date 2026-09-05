@@ -33,8 +33,6 @@ def create_brake_command(packer, apply_brake, pump_on, pcm_override, pcm_cancel_
   pcm_fault_cmd = False
 
   values = {
-    "COMPUTER_BRAKE": apply_brake,
-    "BRAKE_PUMP_REQUEST": pump_on,
     "CRUISE_OVERRIDE": pcm_override,
     "CRUISE_FAULT_CMD": pcm_fault_cmd,
     "CRUISE_CANCEL_CMD": pcm_cancel_cmd,
@@ -47,6 +45,15 @@ def create_brake_command(packer, apply_brake, pump_on, pcm_override, pcm_cancel_
     "AEB_REQ_2": 0,
     "AEB_STATUS": 0,
   }
+
+  if car_fingerprint == CAR.ODYSSEY_HYBRID:
+    # hybrid Odyssey expects brake/pump requests at the HYBRID positions, matching the panda safety checks
+    values["COMPUTER_BRAKE_HYBRID"] = apply_brake
+    values["BRAKE_PUMP_REQUEST_HYBRID"] = pump_on
+  else:
+    values["COMPUTER_BRAKE"] = apply_brake
+    values["BRAKE_PUMP_REQUEST"] = pump_on
+
   bus = get_pt_bus(car_fingerprint)
   return packer.make_can_msg("BRAKE_COMMAND", bus, values)
 
@@ -147,20 +154,28 @@ def create_ui_commands(packer, CP, enabled, pcm_speed, hud, is_metric, acc_hud, 
     commands.append(packer.make_can_msg("ACC_HUD", bus_pt, acc_hud_values))
 
   lkas_hud_values = {
-    'SET_ME_X41': 0x41,
     'STEERING_REQUIRED': hud.steer_required,
     'SOLID_LANES': hud.lanes_visible,
     'BEEP': 0,
   }
+
+  if CP.carFingerprint in HONDA_BOSCH:
+    # Bosch DBCs still describe these as fixed magic bytes
+    lkas_hud_values['SET_ME_X41'] = 0x41
+    if not (CP.flags & HondaFlags.BOSCH_EXT_HUD):
+      lkas_hud_values['SET_ME_X48'] = 0x48
+  else:
+    # Nidec DBCs name the individual bits; these values are bit-equivalent to the old magic bytes
+    lkas_hud_values['LKAS_READY'] = 1
+    lkas_hud_values['LKAS_STATE_CHANGE'] = 1
+    lkas_hud_values['RDM_OFF'] = 1
+    lkas_hud_values['LANE_ASSIST_BEEP_OFF'] = 1
 
   if CP.carFingerprint in HONDA_BOSCH_RADARLESS:
     lkas_hud_values['LANE_LINES'] = 3
     lkas_hud_values['DASHED_LANES'] = hud.lanes_visible
     # car likely needs to see LKAS_PROBLEM fall within a specific time frame, so forward from camera
     lkas_hud_values['LKAS_PROBLEM'] = lkas_hud['LKAS_PROBLEM']
-
-  if not (CP.flags & HondaFlags.BOSCH_EXT_HUD):
-    lkas_hud_values['SET_ME_X48'] = 0x48
 
   if CP.flags & HondaFlags.BOSCH_EXT_HUD and not CP.openpilotLongitudinalControl:
     commands.append(packer.make_can_msg('LKAS_HUD_A', bus_lkas, lkas_hud_values))
