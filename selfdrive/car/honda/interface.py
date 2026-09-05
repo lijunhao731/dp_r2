@@ -283,6 +283,10 @@ class CarInterface(CarInterfaceBase):
     if candidate in HONDA_NIDEC_ALT_SCM_MESSAGES:
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_NIDEC_ALT
 
+    # Hybrid Nidec carries the brake value in different bytes of BRAKE_COMMAND
+    if candidate == CAR.ODYSSEY_HYBRID:
+      ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_NIDEC_HYBRID
+
     if ret.openpilotLongitudinalControl and candidate in HONDA_BOSCH:
       ret.safetyConfigs[0].safetyParam |= Panda.FLAG_HONDA_BOSCH_LONG
 
